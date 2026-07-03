@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BetterPortal – Skylanders für RPCS3</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="portal-ring"><div class="portal-core"></div></div>
+    <div>
+      <h1>BetterPortal</h1>
+      <p>Skylanders-Manager für RPCS3</p>
+    </div>
+  </div>
+  <div class="header-actions">
+    <div id="rpcs3-bar" title="Wenn RPCS3 läuft, kann BetterPortal Figuren direkt einspielen">
+      <span id="rpcs3-status" class="chip"><span class="dot"></span> RPCS3 …</span>
+      <label class="switch" title="Jede Auswahl sofort in RPCS3 laden (auch live im Spiel)">
+        <input type="checkbox" id="auto-inject"> <span>⚡ Direkt in RPCS3</span>
+      </label>
+      <button id="btn-inject-now" title="Aktuelles Portal jetzt an RPCS3 übertragen">▶ Jetzt senden</button>
+    </div>
+    <button id="btn-open-portal" title="Diesen Ordner wählst du in RPCS3 beim Laden">📁 Portal-Ordner öffnen</button>
+    <button id="btn-open-lib">🗄️ Bibliothek-Ordner öffnen</button>
+  </div>
+</header>
+
+<nav id="tabs">
+  <button data-tab="portal" class="active">🔮 Portal</button>
+  <button data-tab="swapper">🔄 Swapper-Studio</button>
+  <button data-tab="hotswap">⚡ Hot-Swap</button>
+  <button data-tab="library">📚 Bibliothek</button>
+  <button data-tab="figures">🗂️ Alle Figuren</button>
+</nav>
+
+<main>
+
+  <!-- ================= Portal ================= -->
+  <section id="tab-portal" class="tab active">
+    <div class="hint">
+      💡 <b>So geht's in RPCS3:</b> Pause/Spiel → <b>Werkzeuge → Skylanders Portal</b> → bei einem Slot
+      auf <b>Load</b> → den Ordner <b>Portal</b> hier aus BetterPortal wählen. Die Dateien sind nach
+      Slot nummeriert (<code>01, 02, …</code>) – einfach der Reihe nach anklicken. RPCS3 merkt sich den
+      Ordner, bis du es schließt.
+    </div>
+    <div class="toolbar wrap">
+      <label>Platzierung:</label>
+      <div id="placement-seg" class="seg" title="Wohin neue Figuren gelegt werden: P1/P2 überschreibt feste Slots, Frei = nächster freier Slot">
+        <button data-mode="p1">👤 Spieler 1</button>
+        <button data-mode="p2">👥 Spieler 2</button>
+        <button data-mode="free">Frei</button>
+      </div>
+      <span class="spacer"></span>
+      <label>Loadout:</label>
+      <select id="loadout-select"></select>
+      <button id="btn-loadout-apply">⤵ Laden</button>
+      <button id="btn-loadout-save">💾 Portal als Loadout speichern</button>
+      <button id="btn-loadout-delete" class="ghost">🗑</button>
+      <button id="btn-clear-all" class="danger">Alle Slots leeren</button>
+    </div>
+    <div id="slots" class="slot-grid"></div>
+  </section>
+
+  <!-- ================= Swapper-Studio ================= -->
+  <section id="tab-swapper" class="tab">
+    <div class="hint">
+      🔄 Oberteil und Unterteil auswählen – BetterPortal erzeugt beide Hälften und legt sie in zwei
+      freie Portal-Slots. Das <b>Unterteil bestimmt die Swap-Zone</b> (Rakete, Graben, …).
+    </div>
+    <div class="swap-columns">
+      <div class="swap-col">
+        <h3>⬆️ Oberteil</h3>
+        <div id="swap-tops" class="swap-grid"></div>
+        <div id="top-variant-wrap" class="variant-wrap hidden">
+          <label>Variante:</label><select id="top-variant"></select>
+        </div>
+      </div>
+      <div class="swap-result">
+        <div id="swap-preview"></div>
+        <button id="btn-swap-random" class="ghost">🎲 Zufalls-Kombi</button>
+        <button id="btn-swap-build" class="primary" disabled>▶ In Portal legen</button>
+      </div>
+      <div class="swap-col">
+        <h3>⬇️ Unterteil <span class="mini-note">(bestimmt Swap-Zone)</span></h3>
+        <div id="swap-bottoms" class="swap-grid"></div>
+        <div id="bottom-variant-wrap" class="variant-wrap hidden">
+          <label>Variante:</label><select id="bottom-variant"></select>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Hot-Swap ================= -->
+  <section id="tab-hotswap" class="tab">
+    <div class="hint">
+      ⚡ Belege die Plätze mit <b>Loadouts oder Einzelfiguren</b> und wechsle per Hotkey
+      (<b id="hotswap-mod-label">Strg+Shift</b>+F1…F9) – <b>global</b>, auch während RPCS3 im
+      Vordergrund läuft. Hoher Doppelton = OK, tiefer Ton = Fehler.<br>
+      💡 Mit aktivem <b>⚡ Direkt in RPCS3</b> (oben rechts) landet die Figur beim Hotkey <b>sofort im
+      laufenden Spiel</b> – BetterPortal steuert dafür RPCS3s Skylanders-Manager automatisch.
+      Ohne den Schalter wird nur der Portal-Ordner vorbereitet.
+    </div>
+    <div id="hotswap-grid" class="slot-grid"></div>
+  </section>
+
+  <!-- ================= Bibliothek ================= -->
+  <section id="tab-library" class="tab">
+    <div class="toolbar wrap">
+      <input id="lib-search" type="search" placeholder="Bibliothek durchsuchen… (Name oder Ordner)">
+      <select id="lib-elem"><option value="">Alle Elemente</option></select>
+      <select id="lib-cat"><option value="">Alle Kategorien</option></select>
+      <button id="btn-lib-refresh" class="ghost">↻ Aktualisieren</button>
+    </div>
+    <div id="lib-sources" class="toolbar wrap"></div>
+    <div id="lib-list"></div>
+  </section>
+
+  <!-- ================= Alle Figuren ================= -->
+  <section id="tab-figures" class="tab">
+    <div class="toolbar wrap">
+      <input id="fig-search" type="search" placeholder="Figur suchen… (z. B. Wash Buckler)">
+      <select id="fig-game"><option value="">Nutzbar in: alle Spiele</option></select>
+      <select id="fig-cat"><option value="">Alle Kategorien</option></select>
+      <select id="fig-elem"><option value="">Alle Elemente</option></select>
+    </div>
+    <div id="fig-count" class="mini-note"></div>
+    <div id="fig-list"></div>
+  </section>
+
+</main>
+
+<div id="modal" class="hidden">
+  <div id="modal-box">
+    <div id="modal-head">
+      <h3 id="modal-title">Figur wählen</h3>
+      <button id="modal-close" class="ghost">✕</button>
+    </div>
+    <div id="modal-filters" class="toolbar wrap" style="margin-bottom:0">
+      <input id="modal-search" type="search" placeholder="Suchen… (Name oder Ordner)">
+      <select id="modal-elem"><option value="">Alle Elemente</option></select>
+      <select id="modal-cat"><option value="">Alle Kategorien</option></select>
+    </div>
+    <div id="modal-list"></div>
+  </div>
+</div>
+
+<div id="toast-wrap"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
