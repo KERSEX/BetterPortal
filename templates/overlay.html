@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>BetterPortal Overlay</title>
+<style>
+  /* Fuer OBS: Browser-Quelle, Hintergrund bleibt transparent */
+  body {
+    margin: 0; background: transparent; overflow: hidden;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  #bar {
+    display: flex; flex-wrap: wrap; gap: 10px; padding: 10px;
+    align-items: center;
+  }
+  .pill {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(15, 17, 24, 0.82);
+    border: 2px solid rgba(62, 230, 193, 0.45);
+    border-radius: 28px; padding: 8px 20px 8px 14px;
+    color: #fff; font-size: 24px; font-weight: 700;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+    animation: pop .25s ease-out;
+  }
+  .pill .dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .pill .role { font-size: 15px; opacity: .75; font-weight: 600; }
+  @keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<script>
+"use strict";
+const COLORS = {
+  Luft: "#8fd8e8", Erde: "#c98a3d", Feuer: "#ff6b4a", Wasser: "#4aa3f0",
+  Magie: "#b76ee0", Tech: "#f5a623", Leben: "#66cc55", Untot: "#9b8fc4",
+  Licht: "#ffe066", Dunkelheit: "#7a5fd0", Kaos: "#58c470",
+};
+const ROLES = { 0: "P1", 1: "P1", 2: "", 3: "", 4: "P2", 5: "P2" };
+let last = "";
+
+async function refresh() {
+  try {
+    const d = await (await fetch("/api/portal")).json();
+    const key = JSON.stringify(d.slots);
+    if (key === last) return;   // nichts geaendert -> kein Neuzeichnen
+    last = key;
+    const bar = document.getElementById("bar");
+    bar.innerHTML = "";
+    d.slots.forEach((s, i) => {
+      if (!s) return;
+      const pill = document.createElement("div");
+      pill.className = "pill";
+      const color = COLORS[s.element] || "#8b93ad";
+      const role = ROLES[i] !== undefined ? ROLES[i] : "";
+      pill.innerHTML =
+        '<span class="dot" style="background:' + color + ';color:' + color + '"></span>' +
+        '<span>' + s.display.replace(/[<>&]/g, "") + '</span>' +
+        (role ? '<span class="role">' + role + '</span>' : "");
+      bar.appendChild(pill);
+    });
+  } catch (e) { /* Server kurz weg -> beim naechsten Tick erneut */ }
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

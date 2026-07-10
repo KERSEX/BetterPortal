@@ -4,13 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BetterPortal – Skylanders für RPCS3</title>
+<link rel="icon" type="image/png" href="/static/favicon.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
 <header>
   <div class="logo">
-    <div class="portal-ring"><div class="portal-core"></div></div>
+    <img class="portal-ring" src="/static/apple-touch-icon.png" alt="BetterPortal">
     <div>
       <h1>BetterPortal</h1>
       <p>Skylanders-Manager für RPCS3</p>
@@ -97,12 +99,11 @@
   <!-- ================= Hot-Swap ================= -->
   <section id="tab-hotswap" class="tab">
     <div class="hint">
-      ⚡ Belege die Plätze mit <b>Loadouts oder Einzelfiguren</b> und wechsle per Hotkey
-      (<b id="hotswap-mod-label">Strg+Shift</b>+F1…F9) – <b>global</b>, auch während RPCS3 im
-      Vordergrund läuft. Hoher Doppelton = OK, tiefer Ton = Fehler.<br>
-      💡 Mit aktivem <b>⚡ Direkt in RPCS3</b> (oben rechts) landet die Figur beim Hotkey <b>sofort im
-      laufenden Spiel</b> – BetterPortal steuert dafür RPCS3s Skylanders-Manager automatisch.
-      Ohne den Schalter wird nur der Portal-Ordner vorbereitet.
+      ⚡ Belege die Plätze mit <b>Loadouts oder Einzelfiguren</b> – dann reicht <b>ein Tipp auf die
+      Kachel</b> und die Figuren liegen im Portal (auch vom Handy aus).<br>
+      💡 Mit aktivem <b>⚡ Direkt in RPCS3</b> (oben rechts) landet alles <b>sofort im laufenden
+      Spiel</b>. Ohne den Schalter wird nur der Portal-Ordner vorbereitet – dann danach oben
+      <b>▶ Jetzt senden</b> drücken.
     </div>
     <div id="hotswap-grid" class="slot-grid"></div>
   </section>
@@ -114,6 +115,9 @@
       <select id="lib-elem"><option value="">Alle Elemente</option></select>
       <select id="lib-cat"><option value="">Alle Kategorien</option></select>
       <button id="btn-lib-refresh" class="ghost">↻ Aktualisieren</button>
+      <span class="spacer"></span>
+      <button id="btn-backup" title="Alle Spielstände + Einstellungen als ZIP sichern">💾 Backup erstellen</button>
+      <button id="btn-backup-open" class="ghost" title="Backup-Ordner öffnen">📂</button>
     </div>
     <div id="lib-sources" class="toolbar wrap"></div>
     <div id="lib-list"></div>

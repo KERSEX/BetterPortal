@@ -82,8 +82,8 @@ let PLACEMENT = "p1";
 function slotRole(i) {
   if (PLACEMENT === "free") return "";
   const roles = {
-    0: "👤 Spieler 1", 1: "👤 P1 · Unterteil", 2: "🧰 Items",
-    3: "👥 Spieler 2", 4: "👥 P2 · Unterteil",
+    0: "👤 Spieler 1", 1: "👤 P1 · Unterteil", 2: "🧰 Items", 3: "🧰 Items",
+    4: "👥 Spieler 2", 5: "👥 P2 · Unterteil",
   };
   return roles[i] || "";
 }
@@ -102,7 +102,7 @@ document.querySelectorAll("#placement-seg button").forEach((b) =>
       await api("/api/placement", { mode: PLACEMENT });
       toast(PLACEMENT === "free"
         ? "Platzierung: nächster freier Slot."
-        : `Platzierung: ${PLACEMENT === "p1" ? "Spieler 1 (Slot 1+2)" : "Spieler 2 (Slot 4+5)"} wird überschrieben, Items → Slot 3.`);
+        : `Platzierung: ${PLACEMENT === "p1" ? "Spieler 1 (Slot 1+2)" : "Spieler 2 (Slot 5+6)"} wird überschrieben, Items → Slot 3+4.`);
     })));
 
 async function refreshPortal() {
@@ -243,14 +243,18 @@ async function openRpcs3Picker() {
     toast("rpcs3.exe nicht gefunden – Pfad in settings.json unter 'rpcs3_path' eintragen.", true);
     return;
   }
-  RPCS3GAMES = d.games;
+  RPCS3GAMES = d.games.slice();
   if (!RPCS3GAMES.length) {
     toast("Keine Skylanders-Spiele in RPCS3 gefunden.", true);
     return;
   }
+  if (!INJECT.rpcs3_running) {
+    // Ganz oben (ueber Spyro's Adventure): RPCS3 ohne Spiel starten
+    RPCS3GAMES.unshift({ title: "Nur RPCS3 starten (ohne Spiel)", title_id: "", boot: "none", icon: null, bare: true });
+  }
   modalMode = "rpcs3";
   modalTarget = null;
-  openModal("RPCS3 starten – welches Spiel?");
+  openModal(INJECT.rpcs3_running ? "Spiel wechseln (RPCS3 startet neu)" : "RPCS3 starten – womit?");
 }
 
 function libRow(f, onClick) {
@@ -280,7 +284,8 @@ function renderModalList() {
       row.className = "row";
       row.style.cursor = "pointer";
       const icon = g.icon
-        ? `<img class="game-icon" src="/api/rpcs3/icon/${esc(g.title_id)}" alt="">` : "🎮";
+        ? `<img class="game-icon" src="/api/rpcs3/icon/${esc(g.title_id)}" alt="">`
+        : (g.bare ? `<img class="game-icon rpcs3-icon" src="/static/icon-small.png" alt="">` : "🎮");
       row.innerHTML = `
         ${icon}
         <span class="name">${esc(g.title)}</span>
@@ -490,59 +495,56 @@ $("#btn-swap-build").addEventListener("click", () =>
 
 /* ================= Hot-Swap ================= */
 
-let HOTSWAP = { modifier: "ctrl+shift", bindings: {} };
+let HOTSWAP = { places: 9, bindings: {} };
 let lastEventSeq = 0;
 
-const MOD_LABELS = { ctrl: "Strg", shift: "Shift", alt: "Alt", windows: "Win" };
-
-function modLabel() {
-  return HOTSWAP.modifier.split("+").map((m) => MOD_LABELS[m] || m).join("+");
-}
-
 function hotkeyLabel(key) {
-  return `${modLabel()}+F${key}`;
+  return `Platz ${key}`;
 }
 
 async function refreshHotswap() {
   const d = await api("/api/hotswap");
-  HOTSWAP = { modifier: d.modifier, bindings: d.bindings };
-  $("#hotswap-mod-label").textContent = modLabel();
+  HOTSWAP = { places: d.places, bindings: d.bindings };
   renderHotswap();
 }
 
 function renderHotswap() {
   const grid = $("#hotswap-grid");
   grid.innerHTML = "";
-  for (let i = 1; i <= 9; i++) {
+  for (let i = 1; i <= HOTSWAP.places; i++) {
     const b = HOTSWAP.bindings[String(i)];
     const tile = document.createElement("div");
-    tile.className = "slot-card " + (b ? "filled" : "empty");
+    tile.className = "slot-card hs-tile " + (b ? "filled" : "empty");
 
     if (b) {
       const isLoadout = b.type === "loadout";
       const count = isLoadout && LOADOUTS[b.name] ? `${LOADOUTS[b.name].length} Figuren` : null;
       const missing = isLoadout && !LOADOUTS[b.name];
       tile.innerHTML = `
-        <div class="hs-key">${hotkeyLabel(i)}</div>
+        <div class="hs-key">${i}</div>
+        <div class="hs-actions">
+          <button data-act="assign" class="ghost" title="Ändern">✏️</button>
+          <button data-act="clear" class="ghost" title="Platz leeren">✖</button>
+        </div>
         <div class="slot-name">${isLoadout ? "💾 " : ""}${esc(isLoadout ? b.name : b.display)}</div>
         <div class="slot-chips">
           ${isLoadout
             ? (missing ? `<span class="chip">⚠ Loadout gelöscht</span>` : `<span class="chip">${count}</span>`)
-            : elemChip(b.element) + `<span class="chip">Einzelfigur → freier Slot</span>`}
+            : elemChip(b.element)}
         </div>
-        <div class="slot-foot">
-          <button data-act="test">▶ Testen</button>
-          <button data-act="assign" class="ghost">Ändern</button>
-          <button data-act="clear" class="ghost">✖</button>
-        </div>`;
-      tile.querySelector('[data-act="test"]').addEventListener("click", () =>
+        <div class="hs-hint mini-note">Tippen zum Laden ⚡</div>`;
+      // Ganze Kachel = auslösen (ausser man trifft einen der kleinen Buttons)
+      tile.addEventListener("click", (e) => {
+        if (e.target.closest("button")) return;
         run(async () => {
+          tile.classList.add("firing");
           const r = await api("/api/hotswap/trigger", { key: i });
           SLOTS = r.slots;
           renderSlots();
           await refreshLibrary(false);
           toast(`⚡ ${r.message}`);
-        }));
+        });
+      });
       tile.querySelector('[data-act="assign"]').addEventListener("click", () => openHotswapPicker(i));
       tile.querySelector('[data-act="clear"]').addEventListener("click", () =>
         run(async () => {
@@ -551,12 +553,30 @@ function renderHotswap() {
         }));
     } else {
       tile.innerHTML = `
-        <div class="hs-key">${hotkeyLabel(i)}</div>
+        <div class="hs-key">${i}</div>
         <button class="slot-empty-btn" data-act="assign">＋ Belegen</button>`;
       tile.querySelector('[data-act="assign"]').addEventListener("click", () => openHotswapPicker(i));
     }
     grid.appendChild(tile);
   }
+
+  // Plätze hinzufügen / entfernen
+  const ctrl = document.createElement("div");
+  ctrl.className = "slot-card empty hs-controls";
+  ctrl.innerHTML = `
+    <button class="ghost" data-act="more">＋ Platz</button>
+    <button class="ghost" data-act="less" ${HOTSWAP.places <= 1 ? "disabled" : ""}>− Platz</button>`;
+  ctrl.querySelector('[data-act="more"]').addEventListener("click", () =>
+    run(async () => {
+      HOTSWAP.places = (await api("/api/hotswap/places", { count: HOTSWAP.places + 1 })).places;
+      renderHotswap();
+    }));
+  ctrl.querySelector('[data-act="less"]').addEventListener("click", () =>
+    run(async () => {
+      HOTSWAP.places = (await api("/api/hotswap/places", { count: HOTSWAP.places - 1 })).places;
+      renderHotswap();
+    }));
+  grid.appendChild(ctrl);
 }
 
 // Hotkey-Ereignisse (von der Tastatur ausgeloest) in der UI anzeigen
@@ -687,6 +707,15 @@ function renderLibrary() {
 $("#lib-search").addEventListener("input", renderLibrary);
 $("#btn-lib-refresh").addEventListener("click", () => run(() => refreshLibrary()));
 
+$("#btn-backup").addEventListener("click", () =>
+  run(async () => {
+    toast("💾 Backup läuft…");
+    const r = await api("/api/backup", {});
+    toast(`💾 ${r.figures} Figuren gesichert (${r.size_mb} MB): ${r.name}`
+      + (r.skipped.length ? ` – ${r.skipped.length} übersprungen (gerade in RPCS3 geladen)` : ""));
+  }));
+$("#btn-backup-open").addEventListener("click", () => run(() => api("/api/backup/open", {})));
+
 /* ================= Alle Figuren ================= */
 
 function initFigureFilters() {
@@ -793,17 +822,12 @@ function setRing(state) {
   ring.classList.toggle("off", state === "off");
   ring.classList.toggle("busy", state === "busy");
   ring.title = state === "busy" ? "Sende Skylander an RPCS3…"
-    : state === "on" ? "RPCS3 verbunden" : "RPCS3 läuft nicht – klicken zum Starten";
+    : state === "on" ? "RPCS3 verbunden – klicken zum Spielwechsel"
+    : "RPCS3 läuft nicht – klicken zum Starten";
 }
 
 document.querySelector(".portal-ring").addEventListener("click", () =>
-  run(async () => {
-    if (INJECT.rpcs3_running) {
-      toast("RPCS3 läuft bereits – Portal ist verbunden.");
-      return;
-    }
-    await openRpcs3Picker();
-  }));
+  run(() => openRpcs3Picker()));
 
 async function refreshInjectStatus() {
   try {

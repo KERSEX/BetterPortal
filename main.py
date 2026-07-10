@@ -9,8 +9,9 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
-import winsound
+import zipfile
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_file
@@ -26,7 +27,7 @@ LOADOUTS_FILE = BASE_DIR / "loadouts.json"
 STATE_FILE = BASE_DIR / "portal_state.json"
 HOTSWAP_FILE = BASE_DIR / "hotswap.json"
 SETTINGS_FILE = BASE_DIR / "settings.json"
-DEFAULT_MODIFIER = "ctrl+shift"  # Hotkeys: Strg+Shift+F1..F9 (aenderbar in hotswap.json)
+BACKUP_DIR = BASE_DIR / "Backups"
 
 _inject_lock = threading.Lock()  # nur eine UI-Automation zur Zeit
 _busy_lock = threading.Lock()
@@ -220,7 +221,20 @@ def _free_slots():
 CAT_TOP = "Swapper (Oberteil)"
 CAT_BOTTOM = "Swapper (Unterteil)"
 ITEM_CATS = {"Falle", "Magisches Item", "Fahrzeug", "Abenteuer/Erweiterung", "Trophaee"}
-ITEM_SLOT = 2  # Slot 3: geteilt fuer Fallen/Items/Fahrzeuge
+ITEM_SLOTS = (2, 3)  # Slots 3+4: geteilt fuer Fallen/Items/Fahrzeuge
+
+
+def _item_target(cat):
+    """Zielslot fuer ein Item: gleiche Kategorie ersetzen (Falle gegen Falle),
+    sonst freien Item-Slot nehmen, sonst Slot 3."""
+    for s in ITEM_SLOTS:
+        if _slot_category(s) == cat:
+            return s
+    files = _portal_files()
+    for s in ITEM_SLOTS:
+        if s not in files:
+            return s
+    return ITEM_SLOTS[0]
 
 
 def _slot_category(slot):
@@ -243,10 +257,10 @@ def _auto_place(info):
             raise ApiError("Alle 8 Slots sind belegt - erst einen Slot leeren.")
         return free[0], []
 
-    base = 0 if mode == "p1" else 3  # P1: Slots 1+2, P2: Slots 4+5
+    base = 0 if mode == "p1" else 4  # P1: Slots 1+2, P2: Slots 5+6
     cat = info.get("category") or ""
     if cat in ITEM_CATS:
-        return ITEM_SLOT, []
+        return _item_target(cat), []
     if cat == CAT_BOTTOM:
         return base + 1, []
     # Normale Figur oder Oberteil -> Spieler-Hauptslot
@@ -424,7 +438,7 @@ def api_swapper():
             raise ApiError("Es werden 2 freie Slots gebraucht - erst Slots leeren.")
         targets = free[:2]
     else:
-        base = 0 if mode == "p1" else 3
+        base = 0 if mode == "p1" else 4
         targets = [base, base + 1]  # ueberschreibt die Spieler-Slots
 
     slots_used = []
@@ -522,12 +536,13 @@ def api_loadouts_delete():
 # ------------------------------------------------------------------ Hot-Swap
 
 _hotswap_seq = itertools.count(1)
-_last_event = None  # letztes Hotkey-Ereignis fuer die Web-UI
+_last_event = None  # letztes Sende-Ereignis fuer die Web-UI
 
 
 def _hotswap_cfg():
     cfg = _load_json(HOTSWAP_FILE, {})
-    cfg.setdefault("modifier", DEFAULT_MODIFIER)
+    cfg.pop("modifier", None)  # Altlast: globale Hotkeys gibt es nicht mehr
+    cfg.setdefault("places", 9)
     cfg.setdefault("bindings", {})
     return cfg
 
@@ -536,7 +551,7 @@ def _trigger_hotswap(key):
     """Hot-Swap-Platz ausfuehren. Gibt eine Ergebnis-Meldung zurueck."""
     binding = _hotswap_cfg()["bindings"].get(str(key))
     if not binding:
-        raise ApiError(f"Hot-Swap F{key} ist nicht belegt.")
+        raise ApiError(f"Hot-Swap-Platz {key} ist nicht belegt.")
 
     if binding["type"] == "loadout":
         result = _apply_loadout(binding["name"], best_effort=True)
@@ -554,58 +569,29 @@ def _trigger_hotswap(key):
     return {"message": f"{info['display']} → Slot {slot + 1}", "blocked": []}
 
 
-def _beep(ok, warning=False):
-    try:
-        if not ok:
-            winsound.Beep(220, 220)
-            winsound.Beep(220, 220)
-        elif warning:
-            winsound.Beep(587, 180)
-        else:
-            winsound.Beep(880, 110)
-            winsound.Beep(1175, 110)
-    except RuntimeError:
-        pass
-
-
-def _hotkey_fire(key):
-    global _last_event
-    try:
-        result = _trigger_hotswap(key)
-        _beep(True, warning=bool(result["blocked"]))
-        _last_event = {"seq": next(_hotswap_seq), "ok": True, "message": result["message"]}
-        _auto_inject(_sync_actions_full())
-    except Exception as e:  # noqa - Hotkey-Thread darf nie sterben
-        _beep(False)
-        _last_event = {"seq": next(_hotswap_seq), "ok": False, "message": str(e)}
-    print(f"[Hot-Swap F{key}] {_last_event['message']}")
-
-
-def _start_hotkeys():
-    try:
-        import keyboard
-    except ImportError:
-        print("Hinweis: Paket 'keyboard' fehlt - globale Hotkeys deaktiviert (pip install keyboard).")
-        return
-    mod = _hotswap_cfg()["modifier"]
-    for i in range(1, 10):
-        keyboard.add_hotkey(f"{mod}+f{i}", _hotkey_fire, args=(i,))
-    print(f"Globale Hotkeys aktiv: {mod}+F1..F9 (funktionieren auch waehrend RPCS3 laeuft)")
-
-
 @app.route("/api/hotswap")
 def api_hotswap():
     cfg = _hotswap_cfg()
-    return jsonify({"ok": True, "modifier": cfg["modifier"], "bindings": cfg["bindings"]})
+    return jsonify({"ok": True, "places": cfg["places"], "bindings": cfg["bindings"]})
+
+
+@app.route("/api/hotswap/places", methods=["POST"])
+def api_hotswap_places():
+    d = request.get_json(force=True)
+    count = max(1, min(24, int(d.get("count", 9))))
+    cfg = _hotswap_cfg()
+    cfg["places"] = count
+    _save_json(HOTSWAP_FILE, cfg)
+    return jsonify({"ok": True, "places": count, "bindings": cfg["bindings"]})
 
 
 @app.route("/api/hotswap/set", methods=["POST"])
 def api_hotswap_set():
     d = request.get_json(force=True)
     key = str(d["key"])
-    if key not in [str(i) for i in range(1, 10)]:
-        raise ApiError("Ungueltiger Hot-Swap-Platz.")
     cfg = _hotswap_cfg()
+    if not (key.isdigit() and 1 <= int(key) <= cfg["places"]):
+        raise ApiError("Ungueltiger Hot-Swap-Platz.")
     cfg["bindings"][key] = d["binding"]
     _save_json(HOTSWAP_FILE, cfg)
     return jsonify({"ok": True, "bindings": cfg["bindings"]})
@@ -631,6 +617,56 @@ def api_hotswap_trigger():
 @app.route("/api/hotswap/status")
 def api_hotswap_status():
     return jsonify({"ok": True, "event": _last_event})
+
+
+# ------------------------------------------------------------------ Backups (manuell)
+
+@app.route("/api/backup", methods=["GET"])
+def api_backup_list():
+    BACKUP_DIR.mkdir(exist_ok=True)
+    backups = [{"name": p.name, "size_mb": round(p.stat().st_size / 1048576, 1), "mtime": p.stat().st_mtime}
+               for p in sorted(BACKUP_DIR.glob("*.zip"), reverse=True)]
+    return jsonify({"ok": True, "backups": backups})
+
+
+@app.route("/api/backup", methods=["POST"])
+def api_backup_create():
+    """Alle Spielstaende (beide Bibliotheks-Quellen) + Konfiguration als ZIP sichern."""
+    BACKUP_DIR.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d_%H%M")
+    dest = BACKUP_DIR / f"BetterPortal-Backup-{stamp}.zip"
+    count, skipped = 0, []
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+        for _prefix, root, label in _lib_sources():
+            if not root.exists():
+                continue
+            arc_root = f"Quellen/{label}" if label else "Bibliothek"
+            for p in root.rglob("*"):
+                if p.is_file() and p.suffix.lower() in SKY_EXTS:
+                    try:
+                        z.write(p, f"{arc_root}/{p.relative_to(root)}")
+                        count += 1
+                    except OSError:
+                        skipped.append(p.name)  # z. B. gerade in RPCS3 gesperrt
+        for f in (LOADOUTS_FILE, HOTSWAP_FILE, SETTINGS_FILE, STATE_FILE):
+            if f.exists():
+                z.write(f, f"Konfig/{f.name}")
+    return jsonify({"ok": True, "name": dest.name, "figures": count,
+                    "size_mb": round(dest.stat().st_size / 1048576, 1), "skipped": skipped})
+
+
+@app.route("/api/backup/open", methods=["POST"])
+def api_backup_open():
+    BACKUP_DIR.mkdir(exist_ok=True)
+    os.startfile(str(BACKUP_DIR))  # noqa - Windows only
+    return jsonify({"ok": True})
+
+
+# ------------------------------------------------------------------ OBS-Overlay
+
+@app.route("/overlay")
+def overlay():
+    return render_template("overlay.html")
 
 
 # ------------------------------------------------------------------ RPCS3 starten
@@ -741,17 +777,57 @@ def api_rpcs3_icon(title_id):
     return "", 404
 
 
+def _run_boot(game, exe):
+    """Spielwechsel: RPCS3 sauber beenden und mit dem gewaehlten Spiel neu starten.
+    (Ein zweiter rpcs3.exe-Aufruf bei laufender Instanz stuerzt ab - darum der Neustart.)
+    Danach werden die Portal-Figuren automatisch wieder eingespielt (wenn Auto-Inject an)."""
+    def worker():
+        global _inject_active
+        with _busy_lock:
+            _inject_active += 1
+        try:
+            with _inject_lock:
+                try:
+                    if not inj.close_rpcs3():
+                        _report_event(False, "RPCS3 ließ sich nicht beenden - Spielwechsel abgebrochen.")
+                        return
+                    subprocess.Popen([str(exe), game["boot"]], cwd=str(exe.parent))
+                    _report_event(True, f"🎮 RPCS3 startet neu mit {game['title']}…")
+                except Exception as e:  # noqa - Thread darf nie sterben
+                    _report_event(False, f"Spielwechsel fehlgeschlagen: {e}")
+                    return
+        finally:
+            with _busy_lock:
+                _inject_active -= 1
+        # Nach dem Neustart die Portal-Figuren wieder einspielen
+        if _settings().get("auto_inject") and inj.wait_for_main_window(40):
+            time.sleep(3.0)  # Menue/Fenster kurz ankommen lassen
+            _run_inject(_sync_actions_full())
+    threading.Thread(target=worker, daemon=True).start()
+
+
 @app.route("/api/rpcs3/launch", methods=["POST"])
 def api_rpcs3_launch():
     d = request.get_json(force=True)
     exe = _rpcs3_exe()
     if not exe:
         raise ApiError("rpcs3.exe nicht gefunden (Pfad in settings.json unter 'rpcs3_path' setzen).")
-    if inj.available() and inj.rpcs3_running():
-        raise ApiError("RPCS3 läuft bereits.")
-    game = next((g for g in _rpcs3_games() if g["boot"] == d.get("boot")), None)
+    boot = d.get("boot")
+    running = inj.available() and inj.rpcs3_running()
+
+    # "Nur RPCS3 starten" (ohne Spiel)
+    if boot == "none":
+        if running:
+            raise ApiError("RPCS3 läuft bereits.")
+        subprocess.Popen([str(exe)], cwd=str(exe.parent))
+        return jsonify({"ok": True, "message": "RPCS3 startet (ohne Spiel)…"})
+
+    game = next((g for g in _rpcs3_games() if g["boot"] == boot), None)
     if not game:
         raise ApiError("Spiel nicht gefunden.")
+    if running:
+        _run_boot(game, exe)  # RPCS3 neu starten mit dem Spiel
+        return jsonify({"ok": True, "message": f"RPCS3 startet neu mit {game['title']}…"})
     subprocess.Popen([str(exe), game["boot"]], cwd=str(exe.parent))
     return jsonify({"ok": True, "message": f"RPCS3 startet mit {game['title']}…"})
 
@@ -806,6 +882,7 @@ def _run_inject(actions):
 
     def _worker_body():
         with _inject_lock:
+            prev = inj.foreground_window()  # Spiel/Browser danach wieder nach vorn
             try:
                 if not inj.available():
                     _report_event(False, "pywinauto fehlt - Auto-Inject nicht moeglich.")
@@ -836,6 +913,10 @@ def _run_inject(actions):
                     _report_event(True, "RPCS3 ist bereits aktuell ✓")
             except Exception as e:  # noqa - Thread darf nie sterben
                 _report_event(False, f"RPCS3-Inject fehlgeschlagen: {e}")
+            finally:
+                # Spiel wieder sichtbar machen und das vorher aktive Fenster fokussieren
+                inj.raise_game_window()
+                inj.restore_foreground(prev)
     threading.Thread(target=worker, daemon=True).start()
 
 
@@ -927,7 +1008,6 @@ def _lan_ip():
 
 if __name__ == "__main__":
     _ensure_dirs()
-    _start_hotkeys()
     port = 5177
     if "--no-browser" not in sys.argv:
         threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()

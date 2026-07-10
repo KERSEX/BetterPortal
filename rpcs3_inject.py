@@ -4,6 +4,7 @@
 #
 # Funktioniert, weil RPCS3 keine Lade-Schnittstelle bietet: der einzige Weg, eine Figur
 # einzuspielen, ist der "Laden"-Knopf im Manager-Dialog - den druecken wir automatisiert.
+import ctypes
 import time
 
 try:
@@ -24,6 +25,7 @@ CANCEL_BUTTON_ID = "2"      # IDCANCEL ("Abbrechen")
 MANAGE_LABELS = ("Verwalten", "Manage")
 SUBMENU_LABELS = ("Portale und Tore", "Portals and Gates")
 LEAF_LABEL = "Skylanders Portal"
+CONFIRM_LABELS = {"Ja", "Yes", "OK"}
 
 
 class InjectError(Exception):
@@ -47,6 +49,40 @@ def _main_window():
 
 def rpcs3_running():
     return _main_window() is not None
+
+
+def foreground_window():
+    """Handle des aktuellen Vordergrund-Fensters (vor der Automation merken)."""
+    try:
+        return ctypes.windll.user32.GetForegroundWindow()
+    except Exception:
+        return 0
+
+
+def restore_foreground(hwnd):
+    """Gemerktes Fenster (Spiel/Browser) nach der Automation wieder nach vorn holen."""
+    if not hwnd:
+        return
+    try:
+        if not ctypes.windll.user32.IsWindow(hwnd):
+            return  # Fenster existiert nicht mehr (z. B. altes Spiel beendet)
+        Desktop(backend="win32").window(handle=hwnd).set_focus()
+    except Exception:
+        pass  # Fokus-Kosmetik darf nie einen Inject scheitern lassen
+
+
+def raise_game_window():
+    """Das Spielfenster (gs_frame) ueber das RPCS3-Hauptfenster heben, ohne ihm
+    den Fokus zu geben - so verdeckt das Hauptfenster nach dem Senden nichts mehr."""
+    SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+    try:
+        for w in _desktop().windows():
+            if w.class_name() == "gs_frame":
+                ctypes.windll.user32.SetWindowPos(
+                    w.handle, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+                return
+    except Exception:
+        pass
 
 
 def find_manager(main_win=None):
@@ -260,3 +296,63 @@ def inject_many(assignments, timeout=8.0):
         except InjectError as e:
             results[slot_index] = (False, str(e))
     return results
+
+
+def _confirm_dialogs(mw):
+    """Eventuelle Rueckfragen bestaetigen (z. B. 'laufende Emulation beenden?')."""
+    try:
+        for c in mw.children():
+            if "32770" in (c.class_name() or ""):
+                continue  # Datei-Dialoge nicht anfassen
+            for b in c.descendants(control_type="Button"):
+                if (b.window_text() or "").strip("&") in CONFIRM_LABELS:
+                    b.invoke()
+                    return
+    except Exception:
+        pass
+
+
+def _pid_alive(pid):
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    h = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+        return code.value == STILL_ACTIVE
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h)
+
+
+def close_rpcs3(timeout=15.0):
+    """RPCS3 sauber beenden (Fenster schliessen) und warten, bis der Prozess weg ist.
+    Noetig fuer den Spielwechsel: eine zweite rpcs3.exe-Instanz stuerzt ab."""
+    mw = _main_window()
+    if not mw:
+        return True
+    pid = mw.element_info.process_id
+    try:
+        mw.close()
+    except Exception:
+        pass
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.4)
+        if not _pid_alive(pid):
+            return True
+        m = _main_window()
+        if m:
+            _confirm_dialogs(m)  # falls doch eine Rueckfrage kommt
+    return not _pid_alive(pid)
+
+
+def wait_for_main_window(timeout=30.0):
+    """Nach einem Neustart warten, bis das RPCS3-Hauptfenster wieder da ist."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _main_window():
+            return True
+        time.sleep(0.8)
+    return False
